@@ -6,6 +6,10 @@ generator client {
   provider = "prisma-client-js"
 }
 
+// libSQL/SQLite. Local dev uses a file (DATABASE_URL); production uses Turso
+// (a hosted libSQL service) via the libSQL driver adapter — see src/lib/prisma.ts.
+// To use Supabase/Postgres instead, change `provider` to "postgresql", point
+// DATABASE_URL at the Supabase connection string, and drop the libSQL adapter.
 datasource db {
   provider = "sqlite"
   url      = env("DATABASE_URL")

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
@@ -14,10 +15,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }
 
-  if (!process.env.ANTHROPIC_API_KEY) {
+  // Bring-your-own-key: the user's Anthropic key arrives in a header, is used
+  // transiently, and is never stored server-side.
+  const apiKey = req.headers.get("x-anthropic-key")?.trim();
+  if (!apiKey) {
     return NextResponse.json(
-      { error: "Server is missing ANTHROPIC_API_KEY." },
-      { status: 500 }
+      { error: "Add your Anthropic API key first." },
+      { status: 400 }
     );
   }
 
@@ -44,11 +48,14 @@ export async function POST(req: Request) {
   }
 
   try {
-    const content = await generateAppointmentDoc({
-      profile,
-      items,
-      appointment: parsed.data.appointment,
-    });
+    const content = await generateAppointmentDoc(
+      {
+        profile,
+        items,
+        appointment: parsed.data.appointment,
+      },
+      apiKey
+    );
 
     const doc = await prisma.appointmentDoc.create({
       data: {
@@ -62,7 +69,16 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ id: doc.id, content });
   } catch (err) {
-    console.error("Failed to generate document", err);
+    // Don't log the error object — it can echo request details. Log a bare label.
+    console.error("Failed to generate document");
+    const status =
+      err instanceof Anthropic.APIError ? err.status ?? 502 : 502;
+    if (status === 401 || status === 403) {
+      return NextResponse.json(
+        { error: "Your Anthropic API key was rejected. Check it and try again." },
+        { status: 401 }
+      );
+    }
     return NextResponse.json(
       { error: "Could not generate the document. Please try again." },
       { status: 502 }

@@ -24,17 +24,28 @@ This is still a POC. Prefer the smallest thing that works over heavy architectur
 
 ## Tech stack
 
+- **Bun** as the package manager and runtime (`bun install`, `bun run …`).
+  Target **Node ≥ 22** for compatibility (`engines.node`).
 - **Next.js 15** (App Router) + **React 19** + **TypeScript** (strict).
 - **Tailwind CSS v4** (via `@tailwindcss/postcss`; no `tailwind.config` — theme
   lives in `src/app/globals.css`).
-- **Prisma** ORM. **SQLite** for local dev (`prisma/dev.db`); switch the
-  `datasource` provider to `postgresql` and point `DATABASE_URL` at Postgres for
-  production.
+- **Prisma** ORM over **libSQL/SQLite**. Local dev uses a SQLite file
+  (`prisma/dev.db`); production uses **Turso** (hosted libSQL) via the
+  `@prisma/adapter-libsql` driver adapter. `src/lib/prisma.ts` switches to the
+  Turso adapter automatically when `TURSO_DATABASE_URL` is set, otherwise it uses
+  the local file. **Alternative free host:** to use **Supabase/Postgres** instead,
+  set the `datasource` provider to `postgresql`, remove the libSQL adapter in
+  `src/lib/prisma.ts`, and point `DATABASE_URL` at the Supabase connection string.
 - **Auth.js (NextAuth v5, beta)** with a Credentials provider (email + password,
   hashed with `bcryptjs`) and **JWT sessions**.
-- **Anthropic SDK** (`@anthropic-ai/sdk`) — Claude is called **only server-side**
-  so the API key never reaches the browser. Default model `claude-sonnet-5`
-  (override with `ANTHROPIC_MODEL`; use `claude-opus-4-8` for highest quality).
+- **Anthropic SDK** (`@anthropic-ai/sdk`) — **bring your own key (BYOK)**. Each
+  user supplies their own Anthropic API key; it is stored **only in their browser**
+  (localStorage), sent per-request in the `x-anthropic-key` header, used
+  transiently server-side, and **never stored on the server or in the DB**. The
+  server needs no Anthropic key. Default model `claude-sonnet-5` (override with
+  `ANTHROPIC_MODEL`; use `claude-opus-4-8` for highest quality).
+- **`next.config.ts`** lists the libSQL packages in `serverExternalPackages` so
+  their native bindings aren't bundled by webpack — keep that if you touch it.
 - Path alias: `@/*` → `src/*`.
 
 ## Project structure
@@ -47,8 +58,8 @@ src/
   auth.ts                # NextAuth config: Credentials provider, JWT callbacks
   types/next-auth.d.ts   # augments Session with user.id
   lib/
-    prisma.ts            # PrismaClient singleton (hot-reload safe)
-    claude.ts            # server-only Claude client, system prompt, prompt builder
+    prisma.ts            # PrismaClient singleton; local SQLite file or Turso (libSQL adapter)
+    claude.ts            # server-only: per-request Claude client (BYOK), system prompt, prompt builder
     categories.ts        # CareCategory display metadata (labels/hints), shared UI + order
   app/
     layout.tsx           # root layout + globals
@@ -63,7 +74,7 @@ src/
     api/
       auth/[...nextauth]/route.ts  # NextAuth handlers
       register/route.ts            # create account (bcrypt hash, dup check)
-      generate/route.ts            # authed: gather data -> Claude -> save AppointmentDoc
+      generate/route.ts            # authed + BYOK key header -> Claude -> save AppointmentDoc
 ```
 
 ## Data model (see `prisma/schema.prisma`)
@@ -83,27 +94,31 @@ When you add a new category, update the enum **and** `src/lib/categories.ts`
 ## Local setup & commands
 
 ```bash
-npm install                 # installs deps; postinstall runs `prisma generate`
+bun install                 # installs deps; postinstall runs `prisma generate`
 cp .env.example .env        # then fill in real values
-npx prisma db push          # create/sync the SQLite dev database
-npm run dev                 # http://localhost:3000
+bunx prisma db push         # create/sync the local SQLite dev database
+bun run dev                 # http://localhost:3000
 ```
 
 Other scripts:
 
-- `npm run build` — `prisma generate && next build` (production build).
-- `npm start` — run the production build.
-- `npm run lint` — ESLint (`eslint-config-next`).
-- `npm run db:studio` — Prisma Studio to inspect data.
-- After editing `prisma/schema.prisma`, run `npx prisma db push` (dev) or create a
-  migration for production.
+- `bun run build` — `prisma generate && next build` (production build).
+- `bun run start` — run the production build.
+- `bun run lint` — ESLint (`eslint-config-next`).
+- `bun run db:studio` — Prisma Studio to inspect data.
+- After editing `prisma/schema.prisma`, run `bunx prisma db push` (dev). For Turso,
+  apply the schema to the hosted DB with the Turso CLI or Prisma against
+  `TURSO_DATABASE_URL`.
 
 ### Environment variables (`.env`, gitignored — see `.env.example`)
 
-- `DATABASE_URL` — `file:./dev.db` for SQLite dev; a Postgres URL in production.
-- `AUTH_SECRET` — required by Auth.js (`npx auth secret` to generate).
-- `ANTHROPIC_API_KEY` — server-side Claude key.
+- `DATABASE_URL` — `file:./dev.db` for local SQLite dev.
+- `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` — set in production to use Turso; when
+  `TURSO_DATABASE_URL` is present the libSQL adapter is used instead of the file.
+- `AUTH_SECRET` — required by Auth.js (`bunx auth secret` to generate).
 - `ANTHROPIC_MODEL` — optional model override (default `claude-sonnet-5`).
+- **No `ANTHROPIC_API_KEY`** — CareCard is BYOK; the key comes from the user's
+  browser at request time, not from the server environment.
 
 ## Conventions
 
@@ -115,9 +130,11 @@ Other scripts:
   (pages) or return 401 (API) when absent. Never trust a `userId` from the client
   — always take it from `session.user.id`, and scope Prisma queries by it.
 - **Validation:** use `zod` at every trust boundary (API routes, server actions).
-- **Keep secrets server-side:** anything using `ANTHROPIC_API_KEY` or the DB must
-  run on the server. Don't import `src/lib/claude.ts` or `src/lib/prisma.ts` into
-  a Client Component.
+- **BYOK handling:** the user's Anthropic key is passed in the `x-anthropic-key`
+  header and used transiently. **Never persist it** (not in the DB, not in logs)
+  and never echo request/error bodies that might contain it. `src/lib/prisma.ts`
+  and the DB must still run only on the server — don't import them into a Client
+  Component.
 - **Styling:** Tailwind utility classes inline; shared theme/tokens in
   `globals.css`. Support light and dark (theme uses `prefers-color-scheme`).
 - Match the existing formatting and naming when adding code.
@@ -128,16 +145,17 @@ Other scripts:
 - **Push:** `git push -u origin <branch-name>`.
 - **Pull requests:** only open one when the user explicitly asks. No PR template
   exists in the repo.
-- Before committing non-trivial changes, run `npm run build` — it type-checks,
+- Before committing non-trivial changes, run `bun run build` — it type-checks,
   lints, and confirms the app compiles.
 
 ## Verifying changes
 
 There is no automated test suite yet. To verify manually:
 
-1. `npm run build` for type/lint/compile safety.
-2. `npm run dev`, then exercise the flow: register → sign in → fill profile → add
-   items → generate document. Generating requires a real `ANTHROPIC_API_KEY`.
+1. `bun run build` for type/lint/compile safety.
+2. `bun run dev`, then exercise the flow: register → sign in → fill profile → add
+   items → paste your Anthropic API key → generate document. Generating requires a
+   valid Anthropic key entered in the app (BYOK).
 
 If you add tests, document how to run them here.
 

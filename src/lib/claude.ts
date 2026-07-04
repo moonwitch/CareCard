@@ -1,10 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 
-// Server-only Claude client. The API key never reaches the browser.
-export const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
-
+// Bring-your-own-key: the user supplies their own Anthropic API key. It is sent
+// with the request and used transiently here — never stored on the server or in
+// the database. This module is server-only so the key isn't bundled to the client.
 export const CLAUDE_MODEL = process.env.ANTHROPIC_MODEL ?? "claude-sonnet-5";
 
 export type CareData = {
@@ -95,7 +93,12 @@ function buildUserMessage(data: CareData): string {
   return lines.join("\n");
 }
 
-export async function generateAppointmentDoc(data: CareData): Promise<string> {
+export async function generateAppointmentDoc(
+  data: CareData,
+  apiKey: string
+): Promise<string> {
+  // Construct a client per request from the user's own key; nothing persists.
+  const anthropic = new Anthropic({ apiKey });
   const message = await anthropic.messages.create({
     model: CLAUDE_MODEL,
     max_tokens: 2000,

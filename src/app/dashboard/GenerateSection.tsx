@@ -1,6 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+
+const KEY_STORAGE = "carecard.anthropicKey";
 
 // Minimal, safe markdown rendering for the generated document: supports
 // headings, bullet lists, and bold. Avoids pulling in a full markdown library
@@ -59,6 +61,30 @@ export function GenerateSection({ hasProfile }: { hasProfile: boolean }) {
   const [doc, setDoc] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [apiKey, setApiKey] = useState("");
+  const [keySaved, setKeySaved] = useState(false);
+
+  // Load the user's saved key from the browser on mount. It lives only here —
+  // the key is never sent to our server except transiently on generate.
+  useEffect(() => {
+    const stored = localStorage.getItem(KEY_STORAGE);
+    if (stored) {
+      setApiKey(stored);
+      setKeySaved(true);
+    }
+  }, []);
+
+  function saveKey() {
+    if (!apiKey.trim()) return;
+    localStorage.setItem(KEY_STORAGE, apiKey.trim());
+    setKeySaved(true);
+  }
+
+  function clearKey() {
+    localStorage.removeItem(KEY_STORAGE);
+    setApiKey("");
+    setKeySaved(false);
+  }
 
   async function generate() {
     setPending(true);
@@ -66,7 +92,10 @@ export function GenerateSection({ hasProfile }: { hasProfile: boolean }) {
     try {
       const res = await fetch("/api/generate", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-anthropic-key": apiKey.trim(),
+        },
         body: JSON.stringify({ appointment: appointment || undefined }),
       });
       const data = await res.json();
@@ -93,6 +122,46 @@ export function GenerateSection({ hasProfile }: { hasProfile: boolean }) {
       </p>
 
       <div className="print:hidden">
+        {/* Bring your own key: stored only in this browser, never on our server. */}
+        <div className="mb-4 rounded-lg bg-current/5 p-3">
+          <label className="flex flex-col gap-1 text-sm">
+            Your Anthropic API key
+            <div className="flex gap-2">
+              <input
+                type="password"
+                value={apiKey}
+                onChange={(e) => {
+                  setApiKey(e.target.value);
+                  setKeySaved(false);
+                }}
+                placeholder="sk-ant-..."
+                autoComplete="off"
+                className="flex-1 rounded-lg border border-current/20 bg-transparent px-3 py-2 text-sm"
+              />
+              {keySaved ? (
+                <button
+                  onClick={clearKey}
+                  className="rounded-lg border border-current/20 px-3 py-2 text-sm hover:bg-current/5"
+                >
+                  Clear
+                </button>
+              ) : (
+                <button
+                  onClick={saveKey}
+                  className="rounded-lg border border-current/20 px-3 py-2 text-sm hover:bg-current/5"
+                >
+                  Save
+                </button>
+              )}
+            </div>
+          </label>
+          <p className="mt-1.5 text-xs opacity-60">
+            {keySaved ? "Saved in this browser only. " : ""}
+            Your key stays in your browser and is used only to call Claude — it
+            is never stored on our server. Get one at console.anthropic.com.
+          </p>
+        </div>
+
         <textarea
           value={appointment}
           onChange={(e) => setAppointment(e.target.value)}
@@ -102,7 +171,7 @@ export function GenerateSection({ hasProfile }: { hasProfile: boolean }) {
         />
         <button
           onClick={generate}
-          disabled={pending || !hasProfile}
+          disabled={pending || !hasProfile || !apiKey.trim()}
           className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
         >
           {pending ? "Preparing…" : "Generate document"}
@@ -110,6 +179,11 @@ export function GenerateSection({ hasProfile }: { hasProfile: boolean }) {
         {!hasProfile && (
           <p className="mt-2 text-sm text-amber-600">
             Save your profile above first.
+          </p>
+        )}
+        {hasProfile && !apiKey.trim() && (
+          <p className="mt-2 text-sm text-amber-600">
+            Add your Anthropic API key above to generate.
           </p>
         )}
         {error && <p className="mt-2 text-sm text-red-500">{error}</p>}

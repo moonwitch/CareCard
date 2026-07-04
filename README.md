@@ -10,29 +10,34 @@ moment, in mind.
 
 ## Tech stack
 
+- Bun (package manager + runtime), Node ≥ 22
 - Next.js 15 (App Router) · React 19 · TypeScript
 - Tailwind CSS v4
-- Prisma (SQLite in dev, Postgres-ready)
+- Prisma over libSQL/SQLite — local file in dev, [Turso](https://turso.tech) in
+  production (Supabase/Postgres also supported)
 - Auth.js (email + password)
-- Anthropic Claude API (server-side)
+- Anthropic Claude API — bring your own key (BYOK)
 
 ## Getting started
 
 ```bash
-npm install
-cp .env.example .env      # fill in AUTH_SECRET and ANTHROPIC_API_KEY
-npx prisma db push        # create the local SQLite database
-npm run dev               # http://localhost:3000
+bun install
+cp .env.example .env      # fill in AUTH_SECRET (Turso vars only for production)
+bunx prisma db push       # create the local SQLite database
+bun run dev               # http://localhost:3000
 ```
 
-Generating documents requires a Claude API key from
-[console.anthropic.com](https://console.anthropic.com).
+CareCard is **bring-your-own-key**: paste your own Anthropic API key
+(from [console.anthropic.com](https://console.anthropic.com)) into the app to
+generate documents. Your key is stored only in your browser and is never saved on
+the server.
 
 See [CLAUDE.md](./CLAUDE.md) for architecture, conventions, and contributor
 guidance.
 
 ## Privacy
 
-CareCard handles sensitive personal health information. Data is stored per-user
-and only ever sent to Claude through your own server-side API key. Never commit
-real data or `.env` files.
+CareCard handles sensitive personal health information. Data is stored per-user,
+and your Anthropic API key stays in your browser — it's sent to the server only
+transiently to call Claude and is never persisted. Never commit real data or
+`.env` files.
