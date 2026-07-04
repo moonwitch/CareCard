@@ -1,0 +1,131 @@
+// CareCard data model.
+// SQLite for local dev; switch `provider` to "postgresql" for production and
+// point DATABASE_URL at a Postgres instance.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// libSQL/SQLite. Local dev uses a file (DATABASE_URL); production uses Turso
+// (a hosted libSQL service) via the libSQL driver adapter — see src/lib/prisma.ts.
+// To use Supabase/Postgres instead, change `provider` to "postgresql", point
+// DATABASE_URL at the Supabase connection string, and drop the libSQL adapter.
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---- Auth.js (NextAuth) models ----
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  passwordHash  String?
+  emailVerified DateTime?
+  image         String?
+  createdAt     DateTime  @default(now())
+
+  accounts     Account[]
+  sessions     Session[]
+  profile      Profile?
+  careItems    CareItem[]
+  appointments AppointmentDoc[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ---- CareCard domain models ----
+
+/// A person's care profile — the "who" the appointment document is about.
+model Profile {
+  id                 String  @id @default(cuid())
+  userId             String  @unique
+  displayName        String
+  pronouns           String?
+  dateOfBirth        String? // stored as ISO string; kept loose for a POC
+  emergencyContact   String?
+  // How this person communicates best — key context for the generated document.
+  communicationNotes String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Categories of information a person can record about themselves.
+enum CareCategory {
+  CONDITION // diagnoses, ongoing medical issues
+  ALLERGY // allergies and adverse reactions
+  MEDICATION // current medications & doses
+  SENSITIVITY // sensory sensitivities (light, sound, touch, etc.)
+  NEED // accommodations / support needs
+  CONCERN // what they want to raise at this appointment
+}
+
+/// A single recorded item. One flexible table keeps the UI and AI prompt simple.
+model CareItem {
+  id        String       @id @default(cuid())
+  userId    String
+  category  CareCategory
+  title     String
+  details   String? // free-text elaboration
+  severity  String? // e.g. "mild" | "moderate" | "severe" — optional, category-dependent
+  active    Boolean      @default(true)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, category])
+}
+
+/// A generated appointment document, saved so it can be revisited/exported.
+model AppointmentDoc {
+  id          String   @id @default(cuid())
+  userId      String
+  title       String
+  // Free-text describing the appointment (e.g. "GP visit about sleep issues").
+  appointment String?
+  content     String // the AI-generated markdown document
+  model       String? // which Claude model produced it
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
